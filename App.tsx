@@ -1,9 +1,11 @@
+
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Upload, Download, Grid, Sun, Moon, Monitor, RefreshCw, Languages, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ToggleLeft, ToggleRight, Loader2, Maximize, Image as ImageIcon, PaintBucket, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings, Palette, X } from 'lucide-react';
 import { COLOR_PRESETS, UI_TEXT, MARD_COLORS } from './constants';
 import { PixelData, Language, Theme, ViewTransform } from './types';
 import { processImageToGrid, downloadFile, generateCroppedPreview, applyOutline } from './utils/imageUtils';
-import { countColors, reduceColorsSmart, mergeColorInGrid, findNearestInPalette, mergeSmallCounts } from './utils/colorUtils';
+import { countColors, reduceColorsSmart, mergeColorInGrid, findNearestInPalette, mergeSmallCounts, shadeColor } from './utils/colorUtils';
 import { Button } from './components/ui/Button';
 import { Slider } from './components/ui/Slider';
 import { CropperModal } from './components/CropperModal';
@@ -379,7 +381,15 @@ export default function App() {
   };
 
   const handleTouchStart = (e: TouchEvent) => {
-      e.preventDefault();
+       const target = e.target as HTMLElement;
+       const isOverlay = target.id === 'empty-state-trigger' || target.closest('#empty-state-trigger');
+
+       if (isOverlay) {
+           // Do not prevent default to allow click to pass through
+       } else {
+           if (e.cancelable) e.preventDefault();
+       }
+
       if (e.touches.length === 1) {
           touchStartCenter.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
           initialViewTransform.current = { ...viewTransform };
@@ -393,7 +403,8 @@ export default function App() {
   };
 
   const handleTouchMove = (e: TouchEvent) => {
-      e.preventDefault(); // Prevent scrolling
+       if (e.cancelable) e.preventDefault();
+      
       if (e.touches.length === 1 && touchStartCenter.current) {
           const dx = e.touches[0].clientX - touchStartCenter.current.x;
           const dy = e.touches[0].clientY - touchStartCenter.current.y;
@@ -659,6 +670,12 @@ export default function App() {
         const previewOffsetY = previewRect.y;
         const useSquares = fullGrid.length > 64;
 
+        // Apply Drop Shadow for Preview visibility
+        ctx.save();
+        ctx.shadowColor = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.3)';
+        ctx.shadowBlur = 15;
+        ctx.shadowOffsetY = 5;
+
         fullGrid.forEach((row, y) => {
             row.forEach((pixel, x) => {
                 if (!pixel) return;
@@ -677,6 +694,8 @@ export default function App() {
                 }
             });
         });
+        
+        ctx.restore(); // Restore to remove shadow for other elements
         
         const hx = previewOffsetX + startX * pCell;
         const hy = previewOffsetY + startY * pCell;
@@ -703,38 +722,55 @@ export default function App() {
         
         if (localCounts.length > 0) {
             const count = localCounts.length;
-            let bestConfig = { cols: 1, itemH: 10, totalScore: 0 };
+            let bestConfig = { cols: 1, itemH: 10, totalScore: 0, gapY: 24 };
             
             const gapX = 8;
-            const gapY = 24;
+            const minGapY = 24;
+            const gapRatio = 0.5; // Gap is 50% of item height
             const maxItemCap = 140;
 
             const maxCheckCols = isPortrait ? 6 : 4; 
 
             for (let cols = 1; cols <= maxCheckCols; cols++) {
                  const rows = Math.ceil(count / cols);
+                 
+                 // Width Constraint
                  const availableW = bomRect.w - (cols - 1) * gapX;
-                 const availableH = bomRect.h - (rows - 1) * gapY;
-                 
-                 if (availableW <= 0 || availableH <= 0) continue;
-
+                 if (availableW <= 0) continue;
                  const slotW = availableW / cols;
-                 const slotH = availableH / rows;
-                 
                  if (slotW < 60) continue; 
-
                  const maxH_byWidth = slotW / 4.0;
-                 const h = Math.min(slotH, maxH_byWidth, maxItemCap);
+
+                 // Height Constraint with Dynamic Gap
+                 // We want H such that: rows*H + (rows-1)*max(minGapY, H*gapRatio) <= RectH.
+                 
+                 // Try H = h_ratio. Check if H*gapRatio >= minGapY.
+                 const h_ratio = bomRect.h / (rows + (rows - 1) * gapRatio);
+                 
+                 // Max Height if gap is fixed minGapY
+                 const availableH_fixed = bomRect.h - (rows - 1) * minGapY;
+                 const h_fixed = availableH_fixed > 0 ? availableH_fixed / rows : 0;
+                 
+                 let maxH_byHeight;
+                 if (h_ratio * gapRatio >= minGapY) {
+                     maxH_byHeight = h_ratio;
+                 } else {
+                     maxH_byHeight = h_fixed;
+                 }
+                 
+                 const h = Math.min(maxH_byWidth, maxH_byHeight, maxItemCap);
+                 const actualGapY = Math.max(minGapY, h * gapRatio);
+                 
                  let score = h;
                  
-                 // Heuristic
-                 if (score > bestConfig.itemH + 2) {
-                     bestConfig = { cols, itemH: h, totalScore: score };
+                 if (score > bestConfig.totalScore) {
+                     bestConfig = { cols, itemH: h, totalScore: score, gapY: actualGapY };
                  } 
             }
             
             const itemH = bestConfig.itemH;
             const cols = bestConfig.cols;
+            const gapY = bestConfig.gapY;
             const slotW = (bomRect.w - (cols - 1) * gapX) / cols;
 
             localCounts.forEach((c, idx) => {
@@ -748,6 +784,17 @@ export default function App() {
                 const cx = ix + radius;
                 const cy = iy + radius;
                 
+                // 2.5D Bead Rendering (Cylinder style)
+                const depth = radius * 0.25;
+                const darkHex = shadeColor(c.hex, -20);
+
+                // Draw Side/Base (Darker)
+                ctx.beginPath();
+                ctx.arc(cx, cy + depth, radius, 0, Math.PI * 2);
+                ctx.fillStyle = darkHex;
+                ctx.fill();
+
+                // Draw Top (Original)
                 ctx.beginPath();
                 ctx.arc(cx, cy, radius, 0, Math.PI * 2);
                 ctx.fillStyle = c.hex;
@@ -775,11 +822,8 @@ export default function App() {
         }
     }
 
-    ctx.fillStyle = isDark ? '#666' : '#999';
-    ctx.font = '300 28px "Inter", sans-serif';
-    ctx.textAlign = 'center'; 
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(t.brandName, width / 2, height - 30);
+    // Footer Removed as requested
+    // ctx.fillText(t.brandName, width / 2, height - 30);
 
   }, [t]);
 
@@ -1107,8 +1151,9 @@ export default function App() {
             {/* Empty State - Click to Upload */}
             {!finalGrid.length && !isProcessing && (
                <div 
+                 id="empty-state-trigger"
                  onClick={() => fileInputRef.current?.click()}
-                 className="absolute inset-0 flex items-center justify-center flex-col text-neutral-400 cursor-pointer hover:bg-neutral-50/50 dark:hover:bg-neutral-900/50 transition-colors"
+                 className="absolute inset-0 z-10 flex items-center justify-center flex-col text-neutral-400 cursor-pointer hover:bg-neutral-50/50 dark:hover:bg-neutral-900/50 transition-colors"
                >
                     <Grid className="w-16 h-16 opacity-20 mb-4" />
                     <p>{t.emptyState}</p>
