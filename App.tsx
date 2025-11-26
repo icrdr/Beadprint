@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Upload, Download, Grid, Sun, Moon, Monitor, RefreshCw, Languages, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ToggleLeft, ToggleRight, Loader2, Maximize, Image as ImageIcon, PaintBucket, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings, Palette, X } from 'lucide-react';
 import { COLOR_PRESETS, UI_TEXT, MARD_COLORS } from './constants';
@@ -122,6 +120,7 @@ export default function App() {
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mainRef = useRef<HTMLElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const t = UI_TEXT[lang];
@@ -365,21 +364,22 @@ export default function App() {
   };
 
   // --- Touch Gestures Helpers ---
-  const getDistance = (touches: React.TouchList) => {
+  const getDistance = (touches: TouchList) => {
       return Math.sqrt(
           Math.pow(touches[0].clientX - touches[1].clientX, 2) +
           Math.pow(touches[0].clientY - touches[1].clientY, 2)
       );
   };
 
-  const getCenter = (touches: React.TouchList) => {
+  const getCenter = (touches: TouchList) => {
       return {
           x: (touches[0].clientX + touches[1].clientX) / 2,
           y: (touches[0].clientY + touches[1].clientY) / 2
       };
   };
 
-  const handleTouchStart = (e: React.TouchEvent) => {
+  const handleTouchStart = (e: TouchEvent) => {
+      e.preventDefault();
       if (e.touches.length === 1) {
           touchStartCenter.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
           initialViewTransform.current = { ...viewTransform };
@@ -392,7 +392,7 @@ export default function App() {
       }
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
+  const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault(); // Prevent scrolling
       if (e.touches.length === 1 && touchStartCenter.current) {
           const dx = e.touches[0].clientX - touchStartCenter.current.x;
@@ -419,6 +419,30 @@ export default function App() {
           });
       }
   };
+  
+  const handleTouchEnd = (e: TouchEvent) => {
+      // Clean up ref if needed, usually just reset dist
+      if (e.touches.length === 0) {
+        touchStartDist.current = null;
+        touchStartCenter.current = null;
+      }
+  }
+
+  // Effect to attach non-passive listeners
+  useEffect(() => {
+    const el = canvasContainerRef.current;
+    if (!el) return;
+
+    el.addEventListener('touchstart', handleTouchStart, { passive: false });
+    el.addEventListener('touchmove', handleTouchMove, { passive: false });
+    el.addEventListener('touchend', handleTouchEnd);
+
+    return () => {
+        el.removeEventListener('touchstart', handleTouchStart);
+        el.removeEventListener('touchmove', handleTouchMove);
+        el.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [viewTransform]); // Re-attach when view state changes so refs are current
 
   // --- Canvas Drawing Logic ---
   const drawBlueprintSheet = useCallback((
@@ -899,7 +923,7 @@ export default function App() {
         <div className="p-4 border-b dark:border-neutral-800 flex items-center justify-between shrink-0 h-16">
           <div className="flex items-center gap-2">
             <Grid className="w-6 h-6" />
-            <h1 className="font-bold text-lg tracking-tight truncate hidden lg:block">{t.appTitle}</h1>
+            <h1 className={`font-bold text-lg tracking-tight truncate ${isMobile ? 'hidden lg:block' : 'block'}`}>{t.appTitle}</h1>
           </div>
           <div className="flex gap-2">
             {/* Mobile close button */}
@@ -1049,18 +1073,14 @@ export default function App() {
          </div>
 
         <div 
-            className="flex-1 relative overflow-hidden cursor-grab active:cursor-grabbing pt-16 lg:pt-0"
+            ref={canvasContainerRef}
+            className="flex-1 relative overflow-hidden cursor-grab active:cursor-grabbing pt-16 lg:pt-0 touch-none"
+            style={{ touchAction: 'none' }}
             onWheel={handleWheel}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={() => {
-                touchStartDist.current = null;
-                touchStartCenter.current = null;
-            }}
         >
             <div className="absolute inset-0 opacity-10 pointer-events-none" 
                  style={{ 
