@@ -432,17 +432,21 @@ export default function App() {
   useEffect(() => {
     const el = canvasContainerRef.current;
     if (!el) return;
-
-    el.addEventListener('touchstart', handleTouchStart, { passive: false });
-    el.addEventListener('touchmove', handleTouchMove, { passive: false });
-    el.addEventListener('touchend', handleTouchEnd);
+    
+    // Only attach custom touch handlers if we have content
+    // This allows default browser behavior (clicks) when empty state is visible
+    if (finalGrid.length > 0) {
+        el.addEventListener('touchstart', handleTouchStart, { passive: false });
+        el.addEventListener('touchmove', handleTouchMove, { passive: false });
+        el.addEventListener('touchend', handleTouchEnd);
+    }
 
     return () => {
         el.removeEventListener('touchstart', handleTouchStart);
         el.removeEventListener('touchmove', handleTouchMove);
         el.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [viewTransform]); // Re-attach when view state changes so refs are current
+  }, [viewTransform, finalGrid.length]); // Re-attach when view state or content presence changes
 
   // --- Canvas Drawing Logic ---
   const drawBlueprintSheet = useCallback((
@@ -1074,8 +1078,8 @@ export default function App() {
 
         <div 
             ref={canvasContainerRef}
-            className="flex-1 relative overflow-hidden cursor-grab active:cursor-grabbing pt-16 lg:pt-0 touch-none"
-            style={{ touchAction: 'none' }}
+            className={`flex-1 relative overflow-hidden cursor-grab active:cursor-grabbing pt-16 lg:pt-0 ${finalGrid.length > 0 ? 'touch-none' : ''}`}
+            style={{ touchAction: finalGrid.length > 0 ? 'none' : 'auto' }}
             onWheel={handleWheel}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
